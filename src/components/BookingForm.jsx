@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 export default function BookingForm() {
   const baseUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8000'
+  const googleKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY
+
   const [status, setStatus] = useState(null)
   const [loading, setLoading] = useState(false)
   const [form, setForm] = useState({
@@ -15,6 +17,73 @@ export default function BookingForm() {
     passengers: 1,
     notes: ''
   })
+
+  const pickupInputRef = useRef(null)
+  const dropoffInputRef = useRef(null)
+  const pickupAutocompleteRef = useRef(null)
+  const dropoffAutocompleteRef = useRef(null)
+
+  // Load Google Maps JS API (Places) lazily
+  useEffect(() => {
+    if (!googleKey) return
+
+    const existing = document.querySelector('script[data-google-maps]')
+    if (existing) {
+      if (window.google && window.google.maps && !pickupAutocompleteRef.current && pickupInputRef.current) {
+        initAutocomplete()
+      }
+      return
+    }
+
+    const script = document.createElement('script')
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${googleKey}&libraries=places&loading=async`
+    script.async = true
+    script.defer = true
+    script.setAttribute('data-google-maps', 'true')
+
+    script.onload = () => {
+      initAutocomplete()
+    }
+
+    script.onerror = () => {
+      console.warn('Kon Google Maps niet laden. Veld blijft standaard tekstveld.')
+    }
+
+    document.body.appendChild(script)
+
+    // No cleanup (script reused across HMR)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [googleKey])
+
+  const initAutocomplete = () => {
+    try {
+      if (!window.google || !window.google.maps || !window.google.maps.places) return
+
+      const options = {
+        fields: ['formatted_address', 'geometry', 'name']
+      }
+
+      if (pickupInputRef.current && !pickupAutocompleteRef.current) {
+        pickupAutocompleteRef.current = new window.google.maps.places.Autocomplete(pickupInputRef.current, options)
+        pickupAutocompleteRef.current.addListener('place_changed', () => {
+          const place = pickupAutocompleteRef.current.getPlace()
+          const value = place?.formatted_address || place?.name || pickupInputRef.current.value
+          setForm(prev => ({ ...prev, pickup_address: value }))
+        })
+      }
+
+      if (dropoffInputRef.current && !dropoffAutocompleteRef.current) {
+        dropoffAutocompleteRef.current = new window.google.maps.places.Autocomplete(dropoffInputRef.current, options)
+        dropoffAutocompleteRef.current.addListener('place_changed', () => {
+          const place = dropoffAutocompleteRef.current.getPlace()
+          const value = place?.formatted_address || place?.name || dropoffInputRef.current.value
+          setForm(prev => ({ ...prev, dropoff_address: value }))
+        })
+      }
+    } catch (e) {
+      console.warn('Autocomplete initialisatie mislukt', e)
+    }
+  }
 
   const handleChange = (e) => {
     const { name, value } = e.target
@@ -32,7 +101,7 @@ export default function BookingForm() {
         body: JSON.stringify({ ...form, passengers: Number(form.passengers) })
       })
       if (!res.ok) throw new Error('Boeking verzenden mislukt')
-      const data = await res.json()
+      await res.json()
       setStatus({ type: 'success', message: 'Bedankt! We bevestigen uw rit zo snel mogelijk.' })
       setForm({ name: '', email: '', phone: '', pickup_address: '', dropoff_address: '', date: '', time: '', passengers: 1, notes: '' })
     } catch (err) {
@@ -42,6 +111,19 @@ export default function BookingForm() {
     }
   }
 
+  const AddressField = ({ name, placeholder, inputRef, value }) => (
+    <input
+      name={name}
+      ref={inputRef}
+      value={value}
+      onChange={handleChange}
+      required
+      placeholder={placeholder}
+      autoComplete="off"
+      className="col-span-1 sm:col-span-2 border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500"
+    />
+  )
+
   return (
     <section id="booking" className="py-20 bg-white">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -50,13 +132,21 @@ export default function BookingForm() {
             <h2 className="text-3xl font-bold text-slate-900">Reserveer uw taxi</h2>
             <p className="mt-2 text-slate-600">Vul uw gegevens in en wij nemen direct contact op.</p>
 
+            {!googleKey && (
+              <p className="mt-4 text-amber-600 text-sm">
+                Tip: voeg uw Google Maps API Key toe als VITE_GOOGLE_MAPS_API_KEY om adres-automatisch aanvullen te activeren.
+              </p>
+            )}
+
             <form onSubmit={handleSubmit} className="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
               <input name="name" value={form.name} onChange={handleChange} required placeholder="Naam" className="col-span-1 sm:col-span-2 border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input name="email" value={form.email} onChange={handleChange} type="email" placeholder="E-mail (optioneel)" className="border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input name="phone" value={form.phone} onChange={handleChange} required placeholder="Telefoon" className="border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input name="passengers" value={form.passengers} onChange={handleChange} type="number" min="1" max="8" placeholder="Passagiers" className="border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <input name="pickup_address" value={form.pickup_address} onChange={handleChange} required placeholder="Ophaaladres" className="col-span-1 sm:col-span-2 border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <input name="dropoff_address" value={form.dropoff_address} onChange={handleChange} required placeholder="Bestemmingsadres" className="col-span-1 sm:col-span-2 border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+              <AddressField name="pickup_address" inputRef={pickupInputRef} value={form.pickup_address} placeholder="Ophaaladres" />
+              <AddressField name="dropoff_address" inputRef={dropoffInputRef} value={form.dropoff_address} placeholder="Bestemmingsadres" />
+
               <input name="date" value={form.date} onChange={handleChange} type="date" required className="border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <input name="time" value={form.time} onChange={handleChange} type="time" required className="border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
               <textarea name="notes" value={form.notes} onChange={handleChange} placeholder="Opmerkingen" className="col-span-1 sm:col-span-2 border rounded-md px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500" />
